@@ -206,6 +206,75 @@ WHERE
 GROUP BY
 	YEAR(created_at),
     WEEK(created_at);
-	
+
+-- gsearch visitors conversion funnel with landing on /lander-1 from 8/5/12 through 9/4/12
+
+-- limit sessions by date and gsearch join results with min landing page where url is /lander-1
+
+-- Step 1: Identify gsearch sessions within date range and whether they landed on pages in question
+ DROP TABLE session_level_landing_flags;
+ 
+CREATE TEMPORARY TABLE sessions_w_pages
+SELECT
+	ws.website_session_id,
+    pageview_url,
+    CASE WHEN pageview_url = '/products' THEN 1 ELSE 0 END AS products_page,
+    CASE WHEN pageview_url = '/the-original-mr-fuzzy' THEN 1 ELSE 0 END AS mrfuzzy_page,
+    CASE WHEN pageview_url = '/cart' THEN 1 ELSE 0 END AS cart_page,
+    CASE WHEN pageview_url = '/shipping' THEN 1 ELSE 0 END AS shipping_page,
+    CASE WHEN pageview_url = '/billing' THEN 1 ELSE 0 END AS billing_page,
+    CASE WHEN pageview_url = '/thank-you-for-your-order' THEN 1 ELSE 0 END AS thankyou_page
+FROM
+	website_sessions AS ws LEFT JOIN
+    website_pageviews AS wp ON ws.website_session_id = wp.website_session_id
+WHERE
+	ws.created_at > '2012-08-05'
+    AND ws.created_at < '2012-09-05'
+    AND pageview_url IN ('/lander-1', '/products', '/the-original-mr-fuzzy', '/cart', '/shipping', '/billing', '/thank-you-for-your-order')
+    AND utm_source = 'gsearch'
+    AND utm_campaign ='nonbrand'
+;
+
+-- Step 2: Count number of sessions and return count landing on each of the pages in question
+
+CREATE TEMPORARY TABLE session_level_landing_flags
+SELECT
+	website_session_id,
+    MAX(products_page) AS product_landing,
+    MAX(mrfuzzy_page) AS mrfuzzy_landing,
+    MAX(cart_page) AS cart_landing,
+    MAX(shipping_page) AS shipping_landing,
+    MAX(billing_page) AS billing_landing,
+    MAX(thankyou_page) AS thankyou_landing
+
+FROM
+	sessions_w_pages
+GROUP BY
+	website_session_id
+;
+
+-- Step 3: Return number of total sessions and sessions landing on each page, and click rates (final output)
+SELECT
+	COUNT(website_session_id) AS sessions,
+    COUNT(CASE WHEN product_landing = 1 THEN website_session_id ELSE NULL END) AS to_products,
+    COUNT(CASE WHEN mrfuzzy_landing = 1 THEN website_session_id ELSE NULL END) AS to_mrfuzzy,
+    COUNT(CASE WHEN cart_landing = 1 THEN website_session_id ELSE NULL END) AS to_cart,
+    COUNT(CASE WHEN shipping_landing = 1 THEN website_session_id ELSE NULL END) AS to_shipping,
+    COUNT(CASE WHEN billing_landing = 1 THEN website_session_id ELSE NULL END) AS to_billing,
+    COUNT(CASE WHEN thankyou_landing = 1 THEN website_session_id ELSE NULL END) AS to_thankyou
+FROM
+	session_level_landing_flags
+;
+
+SELECT
+	COUNT(CASE WHEN product_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(website_session_id) AS lander_click_rt,
+    COUNT(CASE WHEN mrfuzzy_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN product_landing = 1 THEN website_session_id ELSE NULL END) AS products_click_rt,
+    COUNT(CASE WHEN cart_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN mrfuzzy_landing = 1 THEN website_session_id ELSE NULL END) AS mrfuzzy_click_rt,
+    COUNT(CASE WHEN shipping_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN cart_landing = 1 THEN website_session_id ELSE NULL END) AS cart_click_rt,
+    COUNT(CASE WHEN billing_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN shipping_landing = 1 THEN website_session_id ELSE NULL END) AS shipping_click_rt,
+    COUNT(CASE WHEN thankyou_landing = 1 THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN billing_landing = 1 THEN website_session_id ELSE NULL END) AS billing_click_rt
+FROM 
+	session_level_landing_flags
+;
 
     
