@@ -277,4 +277,108 @@ FROM
 	session_level_landing_flags
 ;
 
+-- A/B test to see whether /billing-2 is doing any better than /billing
+-- Percentage of those sessions landing on these pages that end up placing an order
+-- Include all traffic prior to 11/10/2012 and when /billing-2 went live
+
+-- 1) Determine first /billing-2 timestamp
+
+SELECT
+	MIN(created_at) AS first_created_at,
+    website_pageview_id AS first_pv_id
+FROM
+	website_pageviews
+WHERE
+	pageview_url = '/billing-2'
+GROUP BY
+	website_pageview_id
+ORDER BY
+	created_at ASC
+LIMIT 1
+;
+
+-- '2012-09-10 00:13:05' and first_pv_id = 53550
+
+-- 2) Determine relevant sessions within time range using CTE
+
+WITH billing_sessions AS (
+  SELECT
+    ws.website_session_id,
+    pageview_url AS landing_page
+  FROM
+    website_sessions AS ws
+    JOIN website_pageviews AS wp ON ws.website_session_id = wp.website_session_id
+  WHERE
+    ws.created_at > '2012-09-10 00:13:05'
+    AND ws.created_at < '2012-11-10'
+    AND pageview_url IN ('/billing', '/billing-2')
+)
+
+-- Determine relevant pageviews and flag to determine orders using CTE
+
+SELECT
+    bs.website_session_id,
+    landing_page,
+    CASE WHEN pageview_url = '/thank-you-for-your-order' THEN 1 ELSE 0 END AS order_page
+FROM
+	billing_sessions AS bs
+    JOIN website_pageviews AS wp ON bs.website_session_id = wp.website_session_id
+WHERE wp.website_session_id IN (SELECT website_session_id FROM billing_sessions);
+
+-- Determine relevant pageviews and flag to determine orders using temp table
+
+CREATE TEMPORARY TABLE billing_sessions_temp
+  SELECT
+    ws.website_session_id,
+    pageview_url AS landing_page
+  FROM
+    website_sessions AS ws
+    JOIN website_pageviews AS wp ON ws.website_session_id = wp.website_session_id
+  WHERE
+    ws.created_at > '2012-09-10 00:13:05'
+    AND ws.created_at < '2012-11-10'
+    AND pageview_url IN ('/billing', '/billing-2');
+
+-- Additional table to limit pageviews to relevant sessions
+
+CREATE TEMPORARY TABLE billing_sessions_filter
+  SELECT
+    ws.website_session_id,
+    pageview_url AS landing_page
+  FROM
+    website_sessions AS ws
+    JOIN website_pageviews AS wp ON ws.website_session_id = wp.website_session_id
+  WHERE
+    ws.created_at > '2012-09-10 00:13:05'
+    AND ws.created_at < '2012-11-10'
+    AND pageview_url IN ('/billing', '/billing-2');
+
+-- Determine relevant pageviews and flag to determine orders
+
+CREATE TEMPORARY TABLE billing_sessions_w_order
+	SELECT
+		bs.website_session_id,
+		landing_page,
+		CASE WHEN pageview_url = '/thank-you-for-your-order' THEN 1 ELSE NULL END AS order_page
+	FROM
+		billing_sessions_temp AS bs
+		JOIN website_pageviews AS wp ON bs.website_session_id = wp.website_session_id
+	WHERE wp.website_session_id IN (SELECT website_session_id FROM billing_sessions_filter);
     
+-- The above query does not work if the same temp table is referenced more than once; using billing_sessions_temp and billing_sessions_fitler addresses this
+
+SELECT * FROM billing_sessions_temp;
+-- 3) Final output with count of sessions and orders and with percentage
+
+SELECT
+	landing_page AS billing_version_seen,
+    COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(order_page) AS orders,
+    COUNT(order_page)/COUNT(DISTINCT website_session_id) AS billing_to_order_rt
+FROM
+	billing_sessions_w_order
+GROUP BY
+	landing_page;
+  
+
+  
